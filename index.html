@@ -8,20 +8,23 @@
     :root { --bg: #14141c; --panel: #1f1f2b; --text: #f2f2f7; }
     body { font-family: sans-serif; margin: 0; padding: 1.5rem 1rem 4rem; background: var(--bg); color: var(--text); text-align: center; }
     h1 { margin-top: 0; }
+    a { color: #8ea1ff; }
     button { font-size: 1.1rem; padding: .8rem 1.4rem; border: 0; border-radius: 8px; background: #5865f2; color: #fff; cursor: pointer; }
     button:disabled { background: #3a3a4a; color: #888; cursor: not-allowed; }
     button.secondary { background: #3a3a4a; font-size: .9rem; padding: .5rem 1rem; }
     button.small { font-size: .8rem; padding: .35rem .6rem; margin-top: .4rem; }
     .bar { display: flex; gap: .8rem; justify-content: center; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
     .stat { background: var(--panel); padding: .5rem 1rem; border-radius: 8px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .6rem; max-width: 900px; margin: 1rem auto; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .6rem; max-width: 900px; margin: 1rem auto; }
     .shop { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; max-width: 600px; margin: 1rem auto; }
-    .card { border: 3px solid var(--c, #666); background: var(--panel); border-radius: 10px; padding: .6rem .3rem; min-height: 110px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .2rem; font-size: .85rem; }
+    .card { border: 3px solid var(--c, #666); background: var(--panel); border-radius: 10px; padding: .4rem .3rem; min-height: 110px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .2rem; font-size: .85rem; }
+    .card img.art { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 6px; display: block; }
     .card small { opacity: .75; }
-    .card.missing { opacity: .35; border-style: dashed; }
+    .card.missing { opacity: .35; border-style: dashed; aspect-ratio: 2 / 3; min-height: 0; }
     .card.new::after { content: "NOUVEAU"; color: #ffd24a; font-size: .7rem; font-weight: bold; margin-top: .3rem; }
     #msg { opacity: .8; min-height: 1.5rem; margin-top: 1rem; }
     h3 { margin-bottom: .3rem; }
+    h4 { margin: 1.5rem 0 .2rem; }
   </style>
 </head>
 <body>
@@ -59,6 +62,14 @@
     function cardEl(c, extra, qty, withDiscard) {
       const d = el("div", "card " + (extra || ""));
       d.style.setProperty("--c", COLORS[c.rarity_id] || "#666");
+      if (c.image_path) {
+        const img = el("img", "art");
+        img.loading = "lazy";
+        img.alt = c.name;
+        img.src = db.storage.from("cards").getPublicUrl(c.image_path).data.publicUrl;
+        img.onerror = () => img.remove();
+        d.appendChild(img);
+      }
       d.appendChild(el("strong", "", "#" + pad(c.number)));
       d.appendChild(el("span", "", c.name));
       d.appendChild(el("small", "", rarityLabels[c.rarity_id] || c.rarity_id));
@@ -156,35 +167,45 @@
     }
 
     async function loadCollection() {
-      const [cardsRes, collRes] = await Promise.all([
-        db.from("cards").select("id, number, name, rarity_id, series_id").order("series_id").order("number"),
-        db.from("collection").select("card_id, quantity")
+      const [cardsRes, collRes, seriesRes] = await Promise.all([
+        db.from("cards").select("id, number, name, rarity_id, series_id, image_path").order("number"),
+        db.from("collection").select("card_id, quantity"),
+        db.from("series").select("id, name, is_active").order("name")
       ]);
-      if (cardsRes.error || collRes.error) {
-        setMsg((cardsRes.error || collRes.error).message);
-        return;
-      }
+      const err = cardsRes.error || collRes.error || seriesRes.error;
+      if (err) { setMsg(err.message); return; }
+
       const qty = {};
       collRes.data.forEach((r) => { qty[r.card_id] = r.quantity; });
-      const grid = $("collection");
-      grid.textContent = "";
-      let owned = 0;
+      const bySeries = {};
+      cardsRes.data.forEach((c) => { (bySeries[c.series_id] = bySeries[c.series_id] || []).push(c); });
+
+      const box = $("collection");
+      box.textContent = "";
       dupCount = 0; dupGain = 0;
-      cardsRes.data.forEach((c) => {
-        const q = qty[c.id] || 0;
-        if (q) {
-          owned++;
-          dupCount += q - 1;
-          dupGain += (q - 1) * (rarityValues[c.rarity_id] || 0);
-          grid.appendChild(cardEl(c, "", q, true));
-        } else {
-          const d = el("div", "card missing");
-          d.appendChild(el("strong", "", "#" + pad(c.number)));
-          d.appendChild(el("span", "", "???"));
-          grid.appendChild(d);
-        }
+
+      seriesRes.data.forEach((s) => {
+        const list = bySeries[s.id] || [];
+        const ownedCount = list.filter((c) => qty[c.id]).length;
+        if (!s.is_active && ownedCount === 0) return;
+
+        box.appendChild(el("h4", "", s.name + " : " + ownedCount + " / " + list.length));
+        const grid = el("div", "cards");
+        list.forEach((c) => {
+          const q = qty[c.id] || 0;
+          if (q) {
+            dupCount += q - 1;
+            dupGain += (q - 1) * (rarityValues[c.rarity_id] || 0);
+            grid.appendChild(cardEl(c, "", q, true));
+          } else {
+            const d = el("div", "card missing");
+            d.appendChild(el("strong", "", "#" + pad(c.number)));
+            d.appendChild(el("span", "", "???"));
+            grid.appendChild(d);
+          }
+        });
+        box.appendChild(grid);
       });
-      $("collTitle").textContent = "Ma collection : " + owned + " / " + cardsRes.data.length;
       paint();
     }
 
@@ -197,6 +218,13 @@
     function buildGame(profile) {
       app.textContent = "";
       app.appendChild(el("h2", "", "Bienvenue, " + profile.display_name + " !"));
+      if (profile.is_admin) {
+        const p = el("p");
+        const a = el("a", "", "Administration");
+        a.href = "/admin.html";
+        p.appendChild(a);
+        app.appendChild(p);
+      }
 
       const bar = el("div", "bar");
       ["statStock", "statTimer", "statCoins"].forEach((id) => {
@@ -220,16 +248,14 @@
       pack.id = "packArea";
       app.appendChild(pack);
 
-      const title = el("h3", "", "Ma collection");
-      title.id = "collTitle";
-      app.appendChild(title);
+      app.appendChild(el("h3", "", "Ma collection"));
       const da = el("button", "secondary", "");
       da.id = "discardAll";
       da.onclick = () => discard(null);
       app.appendChild(da);
-      const grid = el("div", "cards");
-      grid.id = "collection";
-      app.appendChild(grid);
+      const box = el("div", "");
+      box.id = "collection";
+      app.appendChild(box);
 
       app.appendChild(logoutButton());
     }
@@ -252,7 +278,7 @@
         return;
       }
 
-      const { data: profile, error } = await db.from("profiles").select("display_name").maybeSingle();
+      const { data: profile, error } = await db.from("profiles").select("display_name, is_admin").maybeSingle();
       if (!profile) {
         app.textContent = "";
         app.appendChild(el("p", "", "Profil introuvable. " + (error ? error.message : "")));
