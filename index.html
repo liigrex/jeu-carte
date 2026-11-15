@@ -5,32 +5,132 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jeu de cartes</title>
   <style>
-    :root { --bg: #14141c; --panel: #1f1f2b; --text: #f2f2f7; }
-    body { font-family: sans-serif; margin: 0; padding: 1.5rem 1rem 4rem; background: var(--bg); color: var(--text); text-align: center; }
-    h1 { margin-top: 0; }
+    :root { --text: #f2f2f7; --panel: #1b1b30; --accent: #5865f2; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0; padding: 1.2rem .8rem 4rem; min-height: 100vh; text-align: center; color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at 20% 0%, #26265c 0, #0f1020 55%) #0f1020;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    h1 { margin: .2rem 0 1rem; font-size: 2rem; background: linear-gradient(90deg, #8ea1ff, #ff8bd1); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    h2 { margin: .3rem 0; font-size: 1.2rem; font-weight: 600; }
+    h3 { margin: 1.8rem 0 .4rem; font-size: 1.15rem; }
     a { color: #8ea1ff; }
-    button { font-size: 1.1rem; padding: .8rem 1.4rem; border: 0; border-radius: 8px; background: #5865f2; color: #fff; cursor: pointer; }
-    button:disabled { background: #3a3a4a; color: #888; cursor: not-allowed; }
-    button.secondary { background: #3a3a4a; font-size: .9rem; padding: .5rem 1rem; }
-    button.small { font-size: .8rem; padding: .35rem .6rem; margin-top: .4rem; }
-    .bar { display: flex; gap: .8rem; justify-content: center; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
-    .stat { background: var(--panel); padding: .5rem 1rem; border-radius: 8px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .6rem; max-width: 900px; margin: 1rem auto; }
-    .shop { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; max-width: 600px; margin: 1rem auto; }
-    .card { border: 3px solid var(--c, #666); background: var(--panel); border-radius: 10px; padding: .4rem .3rem; min-height: 110px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .2rem; font-size: .85rem; }
-    .card img.art { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 6px; display: block; }
-    .card small { opacity: .75; }
-    .card.missing { opacity: .35; border-style: dashed; aspect-ratio: 2 / 3; min-height: 0; }
-    .card.new::after { content: "NOUVEAU"; color: #ffd24a; font-size: .7rem; font-weight: bold; margin-top: .3rem; }
-    #msg { opacity: .8; min-height: 1.5rem; margin-top: 1rem; }
-    h3 { margin-bottom: .3rem; }
-    h4 { margin: 1.5rem 0 .2rem; }
+
+    button { font: inherit; font-size: 1rem; padding: .7rem 1.3rem; border: 0; border-radius: 10px; background: var(--accent); color: #fff; cursor: pointer; }
+    button:disabled { background: #34344a; color: #7d7d92; cursor: not-allowed; box-shadow: none; }
+    button.secondary { background: #34344a; font-size: .9rem; padding: .5rem 1rem; }
+    button.small { font-size: .8rem; padding: .4rem .7rem; margin-top: .4rem; }
+    #openBtn { font-size: 1.15rem; padding: .9rem 1.8rem; background: linear-gradient(135deg, #5865f2, #9b59f5); box-shadow: 0 0 18px rgba(120, 100, 255, .5); }
+    #openBtn:disabled { box-shadow: none; background: #34344a; }
+
+    .bar { display: flex; gap: .6rem; justify-content: center; flex-wrap: wrap; margin: 1rem 0 1.2rem; }
+    .stat { background: var(--panel); padding: .5rem 1rem; border-radius: 999px; font-size: .95rem; border: 1px solid #2f2f50; }
+
+    .shop { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .8rem; max-width: 520px; margin: .6rem auto; }
+    .shopitem { background: var(--panel); border: 1px solid #2f2f50; border-radius: 12px; padding: .8rem; display: flex; flex-direction: column; align-items: center; gap: .2rem; }
+    .shopitem small { opacity: .7; }
+
+    /* ---------- CARTES ---------- */
+    .card {
+      position: relative; display: block; padding: 4px; border-radius: 12px;
+      container-type: inline-size; user-select: none;
+    }
+    .card::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--bc, #9aa0a6); z-index: 0; }
+    .card .face {
+      position: relative; z-index: 1; aspect-ratio: 2 / 3; border-radius: 9px; overflow: hidden;
+      background: linear-gradient(160deg, #2a2a4a, #14142a);
+    }
+    .card img.art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+    .card .info {
+      position: absolute; left: 0; right: 0; bottom: 0; padding: 14cqw 5cqw 5cqw; text-align: left;
+      background: linear-gradient(to top, rgba(0, 0, 0, .9) 35%, rgba(0, 0, 0, 0));
+    }
+    .card .name { font-size: 7.5cqw; font-weight: 700; line-height: 1.15; }
+    .card .meta { font-size: 5.5cqw; opacity: .85; margin-top: 1cqw; }
+    .card .rar { font-size: 5.5cqw; font-weight: 700; margin-top: 1cqw; color: var(--bc, #fff); }
+    .card .badge { position: absolute; top: 4cqw; font-size: 5.5cqw; font-weight: 700; padding: 1cqw 3cqw; border-radius: 999px; z-index: 2; }
+    .card .badge.new { left: 4cqw; background: #ffd24a; color: #2a2100; }
+    .card .badge.qty { right: 4cqw; background: rgba(0, 0, 0, .7); color: #fff; }
+    .card.zoomable { cursor: zoom-in; }
+
+    .r-commune { --bc: #9aa0a6; }
+    .r-peu_commune { --bc: #4caf50; }
+    .r-rare { --bc: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, .45); }
+    .r-super_rare { --bc: #a855f7; box-shadow: 0 0 12px rgba(168, 85, 247, .5); }
+    .r-ultra_rare { --bc: #f5c518; box-shadow: 0 0 16px rgba(245, 197, 24, .6); }
+    .r-legendaire { --bc: #ffffff; box-shadow: 0 0 18px rgba(255, 255, 255, .4); }
+    .r-legendaire::before {
+      background: conic-gradient(#ff3b3b, #ffb300, #ffee00, #3ddc84, #00bcd4, #3b6bff, #b44bff, #ff3bd4, #ff3b3b);
+      animation: hue 4s linear infinite;
+    }
+    .r-legendaire .rar {
+      background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #c77dff);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    @keyframes hue { to { filter: hue-rotate(360deg); } }
+
+    .card.missing::before { background: #2b2b44; opacity: .6; }
+    .card.missing .face { background: #15152a; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2cqw; opacity: .6; }
+    .card.missing .q { font-size: 14cqw; font-weight: 700; }
+    .card.missing .n { font-size: 8cqw; opacity: .8; }
+
+    /* ---------- OUVERTURE DE PACK ---------- */
+    .packwrap { margin: 1.2rem auto; max-width: 760px; }
+    .pack { display: grid; grid-template-columns: repeat(5, 1fr); gap: .6rem; }
+    .flip { perspective: 900px; cursor: pointer; animation: dealin .4s both; animation-delay: calc(var(--i, 0) * 70ms); }
+    .flip-inner { position: relative; aspect-ratio: 2 / 3; transform-style: preserve-3d; transition: transform .7s cubic-bezier(.2, .8, .2, 1); }
+    .flip.revealed .flip-inner { transform: rotateY(180deg); }
+    .cardback, .flip .front { position: absolute; inset: 0; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+    .flip .front { transform: rotateY(180deg); height: 100%; }
+    .flip .front .face { height: 100%; aspect-ratio: auto; }
+    .cardback {
+      border-radius: 12px; border: 4px solid #5865f2; display: flex; align-items: center; justify-content: center;
+      font-size: 2.6rem; color: rgba(255, 255, 255, .5);
+      background: repeating-linear-gradient(45deg, #2a2a6a 0 10px, #232359 10px 20px);
+    }
+    .flip.wow { animation: pop .8s; }
+    .flip.wow .front { animation: glow 1.4s ease-out; }
+    .flip.wow-ultra_rare, .flip.wow-legendaire { animation: pop 1s; }
+    @keyframes dealin { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+    @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.14); } 100% { transform: scale(1); } }
+    @keyframes glow { 0% { box-shadow: 0 0 40px 10px var(--bc, #fff); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+    /* ---------- COLLECTION ---------- */
+    .serieshead { margin: 1.6rem 0 .2rem; }
+    .serieshead h4 { margin: 0 0 .4rem; font-size: 1.05rem; }
+    .progress { height: 8px; max-width: 320px; margin: 0 auto; background: #26263f; border-radius: 99px; overflow: hidden; }
+    .progress span { display: block; height: 100%; background: linear-gradient(90deg, #5865f2, #ff8bd1); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .7rem; margin: .8rem auto; }
+    .slot { display: flex; flex-direction: column; align-items: stretch; }
+
+    /* ---------- ZOOM ---------- */
+    .overlay { position: fixed; inset: 0; z-index: 100; background: rgba(5, 5, 12, .88); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .8rem; animation: fade .2s; }
+    .zoombox { width: min(86vw, 380px, calc((100vh - 6rem) * 2 / 3)); }
+    .zoombox .card { padding: 6px; border-radius: 16px; }
+    .overlay small { opacity: .6; }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+    #msg { opacity: .85; min-height: 1.5rem; margin-top: 1rem; }
+
+    @media (max-width: 640px) {
+      .pack { grid-template-columns: repeat(3, 1fr); }
+      h1 { font-size: 1.6rem; }
+      .stat { font-size: .85rem; padding: .4rem .8rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; transition: none !important; }
+    }
   </style>
 </head>
 <body>
-  <h1>Jeu de cartes</h1>
-  <div id="app">Chargement…</div>
-  <p id="msg"></p>
+  <div class="wrap">
+    <h1>Jeu de cartes</h1>
+    <div id="app">Chargement…</div>
+    <p id="msg"></p>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
   <script>
@@ -38,16 +138,17 @@
     const SUPABASE_KEY = "sb_publishable_Stf0JCgiDfKW4fSTDwNOxg_lu3HERpK";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const COLORS = {
-      commune: "#9aa0a6", peu_commune: "#4caf50", rare: "#3b82f6",
-      super_rare: "#a855f7", ultra_rare: "#f59e0b", legendaire: "#ef4444"
-    };
+    const WOW = ["rare", "super_rare", "ultra_rare", "legendaire"];
+    const SUSPENSE = ["super_rare", "ultra_rare", "legendaire"];
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
     let rarityLabels = {}, rarityValues = {};
+    let cardsById = {}, seriesById = {}, seriesList = [];
     let stock = 0, maxStock = 5, coins = 0, secondsLeft = null;
     let dupCount = 0, dupGain = 0;
-    let tickId = null, refreshing = false, busy = false, currentUser;
+    let tickId = null, refreshing = false, busy = false, currentUser, revealToken = 0;
 
     function el(tag, cls, text) {
       const e = document.createElement(tag);
@@ -58,30 +159,131 @@
     function setMsg(t) { $("msg").textContent = t || ""; }
     function pad(n) { return String(n).padStart(2, "0"); }
     function fmt(s) { return Math.floor(s / 60) + ":" + pad(s % 60); }
+    function imageUrl(path) { return db.storage.from("cards").getPublicUrl(path).data.publicUrl; }
 
-    function cardEl(c, extra, qty, withDiscard) {
-      const d = el("div", "card " + (extra || ""));
-      d.style.setProperty("--c", COLORS[c.rarity_id] || "#666");
+    /* ---------- CARTE ---------- */
+    function cardEl(c, opts) {
+      opts = opts || {};
+      const full = cardsById[c.id] || {};
+      const s = seriesById[c.series_id || full.series_id];
+      const card = el("div", "card r-" + c.rarity_id);
+      const face = el("div", "face");
       if (c.image_path) {
         const img = el("img", "art");
-        img.loading = "lazy";
         img.alt = c.name;
-        img.src = db.storage.from("cards").getPublicUrl(c.image_path).data.publicUrl;
+        img.loading = "lazy";
+        img.draggable = false;
+        img.src = imageUrl(c.image_path);
         img.onerror = () => img.remove();
-        d.appendChild(img);
+        face.appendChild(img);
       }
-      d.appendChild(el("strong", "", "#" + pad(c.number)));
-      d.appendChild(el("span", "", c.name));
-      d.appendChild(el("small", "", rarityLabels[c.rarity_id] || c.rarity_id));
-      if (qty > 1) d.appendChild(el("small", "", "×" + qty));
-      if (withDiscard && qty > 1) {
-        const b = el("button", "secondary small", "Défausser ×" + (qty - 1));
-        b.onclick = () => discard(c.id);
-        d.appendChild(b);
+      const info = el("div", "info");
+      info.appendChild(el("div", "name", c.name));
+      info.appendChild(el("div", "meta", (s ? s.name + " · " : "") + "#" + pad(c.number)));
+      info.appendChild(el("div", "rar", rarityLabels[c.rarity_id] || c.rarity_id));
+      face.appendChild(info);
+      if (opts.isNew) face.appendChild(el("div", "badge new", "NOUVEAU"));
+      if (opts.qty > 1) face.appendChild(el("div", "badge qty", "×" + opts.qty));
+      card.appendChild(face);
+      if (opts.zoomable) {
+        card.classList.add("zoomable");
+        card.onclick = () => openZoom(c, opts.qty);
       }
-      return d;
+      return card;
     }
 
+    function missingEl(c) {
+      const card = el("div", "card missing");
+      const face = el("div", "face");
+      face.appendChild(el("div", "q", "?"));
+      face.appendChild(el("div", "n", "#" + pad(c.number)));
+      card.appendChild(face);
+      return card;
+    }
+
+    /* ---------- ZOOM ---------- */
+    function openZoom(c, qty) {
+      closeZoom();
+      const ov = el("div", "overlay");
+      ov.id = "overlay";
+      const box = el("div", "zoombox");
+      box.appendChild(cardEl(c, { qty: qty }));
+      ov.appendChild(box);
+      ov.appendChild(el("small", "", "Touche l'écran pour fermer"));
+      ov.onclick = closeZoom;
+      document.body.appendChild(ov);
+      document.body.style.overflow = "hidden";
+    }
+    function closeZoom() {
+      const o = $("overlay");
+      if (o) o.remove();
+      document.body.style.overflow = "";
+    }
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeZoom(); });
+
+    /* ---------- OUVERTURE DE PACK ---------- */
+    function reveal(w) {
+      w.classList.add("revealed");
+      const r = w.dataset.rarity;
+      if (WOW.includes(r)) w.classList.add("wow", "wow-" + r);
+    }
+
+    function flipEl(c, isNew, index) {
+      const w = el("div", "flip");
+      w.style.setProperty("--i", index);
+      w.dataset.rarity = c.rarity_id;
+      const inner = el("div", "flip-inner");
+      const back = el("div", "cardback", "?");
+      const front = cardEl(c, { isNew: isNew });
+      front.classList.add("front");
+      inner.appendChild(back);
+      inner.appendChild(front);
+      w.appendChild(inner);
+      w.onclick = () => {
+        if (!w.classList.contains("revealed")) reveal(w);
+        else openZoom(c, 0);
+      };
+      return w;
+    }
+
+    async function revealSequence(wraps, token) {
+      await sleep(450);
+      for (const w of wraps) {
+        if (token !== revealToken) return false;
+        const high = SUSPENSE.includes(w.dataset.rarity);
+        if (!w.classList.contains("revealed")) {
+          if (high) await sleep(700);
+          if (token !== revealToken) return false;
+          reveal(w);
+        }
+        await sleep(high ? 1300 : 650);
+      }
+      return token === revealToken;
+    }
+
+    function showPack(list) {
+      const token = ++revealToken;
+      const area = $("packArea");
+      area.textContent = "";
+      const wraps = list.map((c, i) => {
+        const w = flipEl(c, c.is_new, i);
+        area.appendChild(w);
+        return w;
+      });
+      const skip = $("packSkip");
+      skip.hidden = false;
+      skip.onclick = () => {
+        revealToken++;
+        wraps.forEach((w) => { if (!w.classList.contains("revealed")) reveal(w); });
+        skip.hidden = true;
+        loadCollection();
+      };
+      revealSequence(wraps, token).then((done) => {
+        if (done) { skip.hidden = true; loadCollection(); }
+      });
+    }
+
+    /* ---------- DONNÉES ---------- */
     function paint() {
       $("statStock").textContent = "Packs : " + stock + " / " + maxStock;
       $("statCoins").textContent = "Pièces : " + coins;
@@ -117,18 +319,51 @@
       }, 1000);
     }
 
+    async function loadRarities() {
+      const { data } = await db.from("rarities").select("id, label, discard_value");
+      (data || []).forEach((r) => { rarityLabels[r.id] = r.label; rarityValues[r.id] = r.discard_value; });
+    }
+
+    async function loadCatalog() {
+      const [c, s] = await Promise.all([
+        db.from("cards").select("id, number, name, rarity_id, series_id, image_path").order("number"),
+        db.from("series").select("id, name, is_active").order("name")
+      ]);
+      if (c.error || s.error) { setMsg((c.error || s.error).message); return false; }
+      seriesList = s.data;
+      cardsById = {}; c.data.forEach((x) => { cardsById[x.id] = x; });
+      seriesById = {}; s.data.forEach((x) => { seriesById[x.id] = x; });
+      return true;
+    }
+
+    async function loadShop() {
+      const { data, error } = await db.from("pack_types").select("id, name, price, cards_per_pack").order("price");
+      if (error) { setMsg(error.message); return; }
+      const shop = $("shop");
+      shop.textContent = "";
+      data.filter((p) => p.price !== null).forEach((p) => {
+        const d = el("div", "shopitem");
+        d.appendChild(el("strong", "", p.name));
+        d.appendChild(el("small", "", p.cards_per_pack + " cartes"));
+        const b = el("button", "small", "Acheter (" + p.price + " pièces)");
+        b.dataset.price = p.price;
+        b.onclick = () => openPack(p.id);
+        d.appendChild(b);
+        shop.appendChild(d);
+      });
+      paint();
+    }
+
     async function openPack(packId) {
       if (busy) return;
-      busy = true; paint(); setMsg("");
+      busy = true; paint(); setMsg(""); closeZoom();
       const { data, error } = await db.rpc("open_pack", { p_pack_type: packId });
       if (error) { setMsg(error.message); busy = false; await loadStatus(); return; }
-      const area = $("packArea");
-      area.textContent = "";
-      data.cards.forEach((c) => area.appendChild(cardEl(c, c.is_new ? "new" : "", 0, false)));
+      if (data.cards.some((c) => !cardsById[c.id])) await loadCatalog();
       stock = data.stock; secondsLeft = data.seconds_to_next; coins = data.coins;
+      showPack(data.cards);
       busy = false;
       paint();
-      await loadCollection();
     }
 
     async function discard(cardId) {
@@ -143,74 +378,62 @@
       await loadCollection();
     }
 
-    async function loadRarities() {
-      const { data } = await db.from("rarities").select("id, label, discard_value");
-      (data || []).forEach((r) => { rarityLabels[r.id] = r.label; rarityValues[r.id] = r.discard_value; });
-    }
-
-    async function loadShop() {
-      const { data, error } = await db.from("pack_types").select("id, name, price, cards_per_pack").order("price");
-      if (error) { setMsg(error.message); return; }
-      const shop = $("shop");
-      shop.textContent = "";
-      data.filter((p) => p.price !== null).forEach((p) => {
-        const d = el("div", "card");
-        d.appendChild(el("strong", "", p.name));
-        d.appendChild(el("small", "", p.cards_per_pack + " cartes"));
-        const b = el("button", "small", "Acheter (" + p.price + " pièces)");
-        b.dataset.price = p.price;
-        b.onclick = () => openPack(p.id);
-        d.appendChild(b);
-        shop.appendChild(d);
-      });
-      paint();
-    }
-
     async function loadCollection() {
-      const [cardsRes, collRes, seriesRes] = await Promise.all([
-        db.from("cards").select("id, number, name, rarity_id, series_id, image_path").order("number"),
-        db.from("collection").select("card_id, quantity"),
-        db.from("series").select("id, name, is_active").order("name")
-      ]);
-      const err = cardsRes.error || collRes.error || seriesRes.error;
-      if (err) { setMsg(err.message); return; }
+      const okCat = await loadCatalog();
+      if (!okCat) return;
+      const collRes = await db.from("collection").select("card_id, quantity");
+      if (collRes.error) { setMsg(collRes.error.message); return; }
 
       const qty = {};
       collRes.data.forEach((r) => { qty[r.card_id] = r.quantity; });
       const bySeries = {};
-      cardsRes.data.forEach((c) => { (bySeries[c.series_id] = bySeries[c.series_id] || []).push(c); });
+      Object.values(cardsById)
+        .sort((a, b) => a.number - b.number)
+        .forEach((c) => { (bySeries[c.series_id] = bySeries[c.series_id] || []).push(c); });
 
       const box = $("collection");
       box.textContent = "";
       dupCount = 0; dupGain = 0;
 
-      seriesRes.data.forEach((s) => {
+      seriesList.forEach((s) => {
         const list = bySeries[s.id] || [];
-        const ownedCount = list.filter((c) => qty[c.id]).length;
-        if (!s.is_active && ownedCount === 0) return;
+        const owned = list.filter((c) => qty[c.id]).length;
+        if (!s.is_active && owned === 0) return;
 
-        box.appendChild(el("h4", "", s.name + " : " + ownedCount + " / " + list.length));
-        const grid = el("div", "cards");
+        const head = el("div", "serieshead");
+        head.appendChild(el("h4", "", s.name + " : " + owned + " / " + list.length));
+        const pr = el("div", "progress");
+        const bar = el("span");
+        bar.style.width = (list.length ? Math.round((owned / list.length) * 100) : 0) + "%";
+        pr.appendChild(bar);
+        head.appendChild(pr);
+        box.appendChild(head);
+
+        const grid = el("div", "grid");
         list.forEach((c) => {
           const q = qty[c.id] || 0;
-          if (q) {
-            dupCount += q - 1;
-            dupGain += (q - 1) * (rarityValues[c.rarity_id] || 0);
-            grid.appendChild(cardEl(c, "", q, true));
-          } else {
-            const d = el("div", "card missing");
-            d.appendChild(el("strong", "", "#" + pad(c.number)));
-            d.appendChild(el("span", "", "???"));
-            grid.appendChild(d);
+          if (!q) { grid.appendChild(missingEl(c)); return; }
+          const extra = q - 1;
+          const gain = extra * (rarityValues[c.rarity_id] || 0);
+          dupCount += extra; dupGain += gain;
+          const slot = el("div", "slot");
+          slot.appendChild(cardEl(c, { qty: q, zoomable: true }));
+          if (extra > 0) {
+            const b = el("button", "secondary small", "Défausser ×" + extra + " (+" + gain + ")");
+            b.onclick = () => discard(c.id);
+            slot.appendChild(b);
           }
+          grid.appendChild(slot);
         });
         box.appendChild(grid);
       });
       paint();
     }
 
+    /* ---------- PAGE ---------- */
     function logoutButton() {
       const b = el("button", "secondary", "Se déconnecter");
+      b.style.marginTop = "2rem";
       b.onclick = () => db.auth.signOut();
       return b;
     }
@@ -239,14 +462,20 @@
       open.onclick = () => openPack("gratuit");
       app.appendChild(open);
 
+      const pw = el("div", "packwrap");
+      const pack = el("div", "pack");
+      pack.id = "packArea";
+      pw.appendChild(pack);
+      const skip = el("button", "secondary small", "Tout révéler");
+      skip.id = "packSkip";
+      skip.hidden = true;
+      pw.appendChild(skip);
+      app.appendChild(pw);
+
       app.appendChild(el("h3", "", "Boutique"));
       const shop = el("div", "shop");
       shop.id = "shop";
       app.appendChild(shop);
-
-      const pack = el("div", "cards");
-      pack.id = "packArea";
-      app.appendChild(pack);
 
       app.appendChild(el("h3", "", "Ma collection"));
       const da = el("button", "secondary", "");
