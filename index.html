@@ -5,10 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jeu de cartes</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; padding: 4rem 1rem; background: #14141c; color: #f2f2f7; }
+    :root { --bg: #14141c; --panel: #1f1f2b; --text: #f2f2f7; }
+    body { font-family: sans-serif; margin: 0; padding: 1.5rem 1rem 4rem; background: var(--bg); color: var(--text); text-align: center; }
+    h1 { margin-top: 0; }
     button { font-size: 1.1rem; padding: .8rem 1.4rem; border: 0; border-radius: 8px; background: #5865f2; color: #fff; cursor: pointer; }
+    button:disabled { background: #3a3a4a; color: #888; cursor: not-allowed; }
     button.secondary { background: #3a3a4a; font-size: .9rem; padding: .5rem 1rem; }
-    #msg { margin-top: 1.5rem; opacity: .8; }
+    .bar { display: flex; gap: .8rem; justify-content: center; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
+    .stat { background: var(--panel); padding: .5rem 1rem; border-radius: 8px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .6rem; max-width: 900px; margin: 1rem auto; }
+    .card { border: 3px solid var(--c, #666); background: var(--panel); border-radius: 10px; padding: .6rem .3rem; min-height: 110px; display: flex; flex-direction: column; justify-content: center; gap: .2rem; font-size: .85rem; }
+    .card small { opacity: .75; }
+    .card.missing { opacity: .35; border-style: dashed; }
+    .card.new::after { content: "NOUVEAU"; color: #ffd24a; font-size: .7rem; font-weight: bold; margin-top: .3rem; }
+    #msg { opacity: .8; min-height: 1.5rem; margin-top: 1rem; }
   </style>
 </head>
 <body>
@@ -22,16 +32,155 @@
     const SUPABASE_KEY = "sb_publishable_Stf0JCgiDfKW4fSTDwNOxg_lu3HERpK";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+    const COLORS = {
+      commune: "#9aa0a6", peu_commune: "#4caf50", rare: "#3b82f6",
+      super_rare: "#a855f7", ultra_rare: "#f59e0b", legendaire: "#ef4444"
+    };
     const app = document.getElementById("app");
-    const msg = document.getElementById("msg");
+    const $ = (id) => document.getElementById(id);
+    let rarityLabels = {};
+    let stock = 0, maxStock = 5, coins = 0, secondsLeft = null;
+    let tickId = null, refreshing = false, currentUser;
+
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+    function setMsg(t) { $("msg").textContent = t || ""; }
+    function pad(n) { return String(n).padStart(2, "0"); }
+    function fmt(s) { return Math.floor(s / 60) + ":" + pad(s % 60); }
+
+    function cardEl(c, extra, qty) {
+      const d = el("div", "card " + (extra || ""));
+      d.style.setProperty("--c", COLORS[c.rarity_id] || "#666");
+      d.appendChild(el("strong", "", "#" + pad(c.number)));
+      d.appendChild(el("span", "", c.name));
+      d.appendChild(el("small", "", rarityLabels[c.rarity_id] || c.rarity_id));
+      if (qty > 1) d.appendChild(el("small", "", "×" + qty));
+      return d;
+    }
+
+    function paint() {
+      $("statStock").textContent = "Packs : " + stock + " / " + maxStock;
+      $("statCoins").textContent = "Pièces : " + coins;
+      $("statTimer").textContent = secondsLeft == null ? "Stock plein" : "Prochain pack dans " + fmt(secondsLeft);
+      $("openBtn").disabled = stock < 1;
+    }
+
+    async function loadStatus() {
+      const { data, error } = await db.rpc("get_status");
+      if (error) { setMsg(error.message); return; }
+      stock = data.stock; maxStock = data.max_stock; coins = data.coins; secondsLeft = data.seconds_to_next;
+      paint();
+    }
+
+    function startTick() {
+      if (tickId) clearInterval(tickId);
+      tickId = setInterval(async () => {
+        if (secondsLeft == null) return;
+        secondsLeft -= 1;
+        if (secondsLeft <= 0) {
+          if (!refreshing) { refreshing = true; await loadStatus(); refreshing = false; }
+        } else { paint(); }
+      }, 1000);
+    }
+
+    async function openPack() {
+      $("openBtn").disabled = true;
+      setMsg("");
+      const { data, error } = await db.rpc("open_pack", { p_pack_type: "gratuit-test" });
+      if (error) { setMsg(error.message); await loadStatus(); return; }
+      const area = $("packArea");
+      area.textContent = "";
+      data.cards.forEach((c) => area.appendChild(cardEl(c, c.is_new ? "new" : "", 0)));
+      stock = data.stock; secondsLeft = data.seconds_to_next;
+      paint();
+      await loadCollection();
+    }
+
+    async function loadRarities() {
+      const { data } = await db.from("rarities").select("id, label");
+      (data || []).forEach((r) => { rarityLabels[r.id] = r.label; });
+    }
+
+    async function loadCollection() {
+      const [cardsRes, collRes] = await Promise.all([
+        db.from("cards").select("id, number, name, rarity_id, series_id").order("series_id").order("number"),
+        db.from("collection").select("card_id, quantity")
+      ]);
+      if (cardsRes.error || collRes.error) {
+        setMsg((cardsRes.error || collRes.error).message);
+        return;
+      }
+      const qty = {};
+      collRes.data.forEach((r) => { qty[r.card_id] = r.quantity; });
+      const grid = $("collection");
+      grid.textContent = "";
+      let owned = 0;
+      cardsRes.data.forEach((c) => {
+        const q = qty[c.id] || 0;
+        if (q) {
+          owned++;
+          grid.appendChild(cardEl(c, "", q));
+        } else {
+          const d = el("div", "card missing");
+          d.appendChild(el("strong", "", "#" + pad(c.number)));
+          d.appendChild(el("span", "", "???"));
+          grid.appendChild(d);
+        }
+      });
+      $("collTitle").textContent = "Ma collection : " + owned + " / " + cardsRes.data.length;
+    }
+
+    function logoutButton() {
+      const b = el("button", "secondary", "Se déconnecter");
+      b.onclick = () => db.auth.signOut();
+      return b;
+    }
+
+    function buildGame(profile) {
+      app.textContent = "";
+      app.appendChild(el("h2", "", "Bienvenue, " + profile.display_name + " !"));
+
+      const bar = el("div", "bar");
+      ["statStock", "statTimer", "statCoins"].forEach((id) => {
+        const s = el("div", "stat");
+        s.id = id;
+        bar.appendChild(s);
+      });
+      app.appendChild(bar);
+
+      const open = el("button", "", "Ouvrir un pack");
+      open.id = "openBtn";
+      open.onclick = openPack;
+      app.appendChild(open);
+
+      const pack = el("div", "cards");
+      pack.id = "packArea";
+      app.appendChild(pack);
+
+      const title = el("h3", "", "Ma collection");
+      title.id = "collTitle";
+      app.appendChild(title);
+      const grid = el("div", "cards");
+      grid.id = "collection";
+      app.appendChild(grid);
+
+      app.appendChild(logoutButton());
+    }
 
     async function render(session) {
-      app.textContent = "";
-      msg.textContent = "";
+      const uid = session ? session.user.id : null;
+      if (uid === currentUser) return;
+      currentUser = uid;
+      setMsg("");
 
       if (!session) {
-        const btn = document.createElement("button");
-        btn.textContent = "Se connecter avec Discord";
+        if (tickId) clearInterval(tickId);
+        app.textContent = "";
+        const btn = el("button", "", "Se connecter avec Discord");
         btn.onclick = () => db.auth.signInWithOAuth({
           provider: "discord",
           options: { redirectTo: window.location.origin }
@@ -40,30 +189,18 @@
         return;
       }
 
-      const { data: profile, error } = await db
-        .from("profiles")
-        .select("display_name, coins")
-        .maybeSingle();
-
-      const hello = document.createElement("h2");
-      hello.textContent = profile
-        ? "Bienvenue, " + profile.display_name + " !"
-        : "Connecté, mais profil introuvable.";
-      app.appendChild(hello);
-
-      if (profile) {
-        const coins = document.createElement("p");
-        coins.textContent = "Pièces : " + profile.coins;
-        app.appendChild(coins);
-      } else if (error) {
-        msg.textContent = "Erreur : " + error.message;
+      const { data: profile, error } = await db.from("profiles").select("display_name").maybeSingle();
+      if (!profile) {
+        app.textContent = "";
+        app.appendChild(el("p", "", "Profil introuvable. " + (error ? error.message : "")));
+        app.appendChild(logoutButton());
+        return;
       }
-
-      const out = document.createElement("button");
-      out.className = "secondary";
-      out.textContent = "Se déconnecter";
-      out.onclick = () => db.auth.signOut();
-      app.appendChild(out);
+      buildGame(profile);
+      startTick();
+      await loadRarities();
+      await loadStatus();
+      await loadCollection();
     }
 
     db.auth.getSession().then(({ data }) => render(data.session));
