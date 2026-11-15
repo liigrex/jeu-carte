@@ -16,7 +16,7 @@
     button.secondary { background: #3a3a4a; }
     button.small { font-size: .8rem; padding: .35rem .6rem; }
     button.danger { background: #b3363f; }
-    input[type=text], select { font-size: 1rem; padding: .4rem; border-radius: 6px; border: 1px solid #444; background: #14141c; color: var(--text); }
+    input[type=text], input[type=number], select { font-size: 1rem; padding: .4rem; border-radius: 6px; border: 1px solid #444; background: #14141c; color: var(--text); }
     .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
     .scroll { overflow-x: auto; }
     table { border-collapse: collapse; width: 100%; }
@@ -52,12 +52,13 @@
   }
   function setMsg(t) { $("msg").textContent = t || ""; }
   function pad(n) { return String(n).padStart(2, "0"); }
+  function stamp() { return Date.now().toString(36); }
   function slug(s) {
     return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
       .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   }
   function imgUrl(path) {
-    return db.storage.from("cards").getPublicUrl(path).data.publicUrl + "?t=" + Date.now();
+    return db.storage.from("cards").getPublicUrl(path).data.publicUrl;
   }
 
   // Redimensionne en 600x900 et convertit en WebP
@@ -115,6 +116,42 @@
     setMsg(flag ? "Série activée : elle entre dans les tirages." : "Série désactivée : elle n'est plus tirée.");
   }
 
+  async function deleteSeries() {
+    const s = seriesList.find((x) => x.id === current);
+    if (!s) return;
+    const typed = prompt(
+      "Supprimer définitivement la série « " + s.name + " » avec ses " + cards.length +
+      " carte(s), ses images et son pack à thème ?\n" +
+      "Les cartes concernées disparaîtront aussi des collections des joueurs.\n" +
+      "Cette action est irréversible.\n\n" +
+      "Pour confirmer, tape le nom exact de la série :"
+    );
+    if (typed === null) return;
+    if (typed.trim() !== s.name) { setMsg("Nom incorrect : suppression annulée."); return; }
+    setMsg("Suppression en cours…");
+    try {
+      // 1) packs liés à la série (leurs probabilités partent avec)
+      let r = await db.from("pack_types").delete().eq("series_id", s.id);
+      if (r.error) throw r.error;
+      // 2) cartes (les collections des joueurs sont nettoyées automatiquement)
+      r = await db.from("cards").delete().eq("series_id", s.id);
+      if (r.error) throw r.error;
+      // 3) images
+      const files = await db.storage.from("cards").list(s.id, { limit: 1000 });
+      if (!files.error && files.data && files.data.length) {
+        await db.storage.from("cards").remove(files.data.map((f) => s.id + "/" + f.name));
+      }
+      // 4) la série elle-même
+      r = await db.from("series").delete().eq("id", s.id);
+      if (r.error) throw r.error;
+      setMsg("Série « " + s.name + " » supprimée.");
+      current = null;
+      await refreshAll();
+    } catch (e) {
+      setMsg("Erreur : " + e.message);
+    }
+  }
+
   async function createThemePack() {
     const s = seriesList.find((x) => x.id === current);
     const id = "theme-" + s.id;
@@ -144,8 +181,39 @@
     }
   }
 
+  // Applique un nouvel ordre (liste d'identifiants de cartes) : renumérote 1..N
+  async function applyOrder(ids) {
+    const { error } = await db.rpc("reorder_series", { p_series: current, p_order: ids });
+    if (error) { setMsg("Erreur : " + error.message); renderCards(); return false; }
+    await loadCards();
+    renderCards();
+    return true;
+  }
+
+  async function moveCard(c, value) {
+    const n = cards.length;
+    let pos = parseInt(value, 10);
+    if (isNaN(pos)) { renderCards(); return; }
+    pos = Math.max(1, Math.min(n, pos));
+    if (pos === c.number) { renderCards(); return; }
+    const ids = cards.filter((x) => x.id !== c.id).map((x) => x.id);
+    ids.splice(pos - 1, 0, c.id);
+    if (await applyOrder(ids)) setMsg("Carte déplacée en position " + pos + " : les autres numéros se sont décalés.");
+  }
+
+  async function sortByRarity() {
+    if (!cards.length) return;
+    const rank = {};
+    rarities.forEach((r, i) => { rank[r.id] = i; });
+    const ids = cards.slice()
+      .sort((a, b) => (rank[a.rarity_id] - rank[b.rarity_id]) || (a.number - b.number))
+      .map((c) => c.id);
+    if (await applyOrder(ids)) setMsg("Cartes triées de la plus commune à la plus rare, numéros mis à jour.");
+  }
+
   async function bulkAdd() {
     if (busy) return;
+    if (!current) { setMsg("Crée d'abord une série."); return; }
     const files = Array.from($("bulkInput").files)
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     if (!files.length) { setMsg("Choisis d'abord des images."); return; }
@@ -157,8 +225,8 @@
       setMsg("Envoi " + (done + 1) + " / " + files.length + " : " + f.name);
       try {
         const blob = await toWebp(f);
-        const path = current + "/" + pad(next) + ".webp";
-        const up = await db.storage.from("cards").upload(path, blob, { contentType: "image/webp", upsert: true });
+        const path = current + "/" + stamp() + "-" + pad(next) + ".webp";
+        const up = await db.storage.from("cards").upload(path, blob, { contentType: "image/webp" });
         if (up.error) throw up.error;
         const ins = await db.from("cards").insert({
           series_id: current, number: next, name: "Carte " + pad(next),
@@ -171,8 +239,9 @@
         break;
       }
     }
-    if (done === files.length) setMsg(done + " carte(s) ajoutée(s). Règle maintenant leur nom et leur rareté dans le tableau.");
+    if (done === files.length) setMsg(done + " carte(s) ajoutée(s). Règle maintenant leur nom et leur rareté, puis clique sur « Trier par rareté ».");
     busy = false;
+    $("bulkBtn").disabled = false;
     $("bulkInput").value = "";
     await loadCards();
     renderCards();
@@ -191,13 +260,13 @@
     try {
       status.textContent = "…";
       const blob = await toWebp(file);
-      const path = current + "/" + pad(c.number) + ".webp";
-      const up = await db.storage.from("cards").upload(path, blob, { contentType: "image/webp", upsert: true });
+      const path = current + "/" + stamp() + "-" + c.id + ".webp";
+      const up = await db.storage.from("cards").upload(path, blob, { contentType: "image/webp" });
       if (up.error) throw up.error;
-      if (c.image_path !== path) {
-        const ok = await updateCard(c, { image_path: path }, status);
-        if (!ok) return;
-      }
+      const old = c.image_path;
+      const ok = await updateCard(c, { image_path: path }, status);
+      if (!ok) return;
+      if (old && old !== path) await db.storage.from("cards").remove([old]);
       img.src = imgUrl(path);
       status.textContent = "✓";
     } catch (e) {
@@ -211,7 +280,7 @@
     const { error } = await db.from("cards").delete().eq("id", c.id);
     if (error) { setMsg("Erreur : " + error.message); return; }
     if (c.image_path) await db.storage.from("cards").remove([c.image_path]);
-    setMsg("Carte supprimée.");
+    setMsg("Carte supprimée. Clique sur « Trier par rareté » ou déplace une carte pour combler le trou dans la numérotation.");
     await loadCards();
     renderCards();
   }
@@ -220,6 +289,7 @@
     const wrap = $("cardsWrap");
     wrap.textContent = "";
     $("count").textContent = cards.length + " carte(s) dans cette série";
+    $("sortBtn").disabled = cards.length < 2;
     if (!cards.length) return;
     const table = el("table");
     const head = el("tr");
@@ -239,7 +309,13 @@
       tdImg.appendChild(img);
       tr.appendChild(tdImg);
 
-      tr.appendChild(el("td", "", "#" + pad(c.number)));
+      const tdNum = el("td");
+      const num = el("input");
+      num.type = "number"; num.min = 1; num.max = cards.length; num.value = c.number;
+      num.style.width = "4.5rem";
+      num.onchange = () => moveCard(c, num.value);
+      tdNum.appendChild(num);
+      tr.appendChild(tdNum);
 
       const tdName = el("td");
       const inp = el("input");
@@ -328,13 +404,27 @@
     nb.onclick = createSeries;
     r2.appendChild(ni); r2.appendChild(nb);
     p1.appendChild(r2);
+
+    const r4 = el("div", "row");
+    const delBtn = el("button", "danger small", "Supprimer cette série");
+    delBtn.id = "delSeriesBtn";
+    delBtn.onclick = deleteSeries;
+    r4.appendChild(delBtn);
+    p1.appendChild(r4);
     app.appendChild(p1);
 
     app.appendChild(el("h2", "", "Cartes de la série"));
     const p2 = el("div", "panel");
-    const cnt = el("div", "", "");
+    const top = el("div", "row");
+    const cnt = el("span", "", "");
     cnt.id = "count";
-    p2.appendChild(cnt);
+    top.appendChild(cnt);
+    const sortBtn = el("button", "secondary small", "Trier par rareté");
+    sortBtn.id = "sortBtn";
+    sortBtn.onclick = sortByRarity;
+    top.appendChild(sortBtn);
+    p2.appendChild(top);
+    p2.appendChild(el("small", "", "Changer le numéro d'une carte la place à cette position et décale les autres. « Trier par rareté » renumérote de la plus commune à la plus rare."));
 
     const r3 = el("div", "row");
     const bi = el("input");
@@ -356,6 +446,7 @@
     const s = seriesList.find((x) => x.id === current);
     $("activeBox").checked = !!(s && s.is_active);
     $("activeBox").disabled = !s;
+    $("delSeriesBtn").disabled = !s;
     await renderThemeArea();
     await loadCards();
     renderCards();
