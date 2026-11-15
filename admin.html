@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administration</title>
+  <style>
+    :root { --bg: #14141c; --panel: #1f1f2b; --text: #f2f2f7; }
+    body { font-family: sans-serif; margin: 0; padding: 1.5rem 1rem 4rem; background: var(--bg); color: var(--text); }
+    .wrap { max-width: 900px; margin: 0 auto; }
+    a { color: #8ea1ff; }
+    h2 { margin-top: 2rem; }
+    .panel { background: var(--panel); border-radius: 10px; padding: 1rem; margin: .8rem 0; }
+    button { font-size: 1rem; padding: .6rem 1.1rem; border: 0; border-radius: 8px; background: #5865f2; color: #fff; cursor: pointer; }
+    button:disabled { background: #3a3a4a; color: #888; cursor: not-allowed; }
+    button.secondary { background: #3a3a4a; }
+    button.small { font-size: .8rem; padding: .35rem .6rem; }
+    button.danger { background: #b3363f; }
+    input[type=text], select { font-size: 1rem; padding: .4rem; border-radius: 6px; border: 1px solid #444; background: #14141c; color: var(--text); }
+    .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: .4rem; text-align: left; vertical-align: middle; }
+    tr + tr td { border-top: 1px solid #2c2c3a; }
+    img.thumb { width: 52px; height: 78px; object-fit: cover; border-radius: 4px; background: #14141c; display: block; }
+    #msg { margin-top: 1rem; min-height: 1.5rem; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Administration</h1>
+  <p><a href="/">← Retour au jeu</a></p>
+  <div id="app">Chargement…</div>
+  <p id="msg"></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+  const SUPABASE_URL = "https://hzabzcjvbricrferrxje.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_Stf0JCgiDfKW4fSTDwNOxg_lu3HERpK";
+  const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const $ = (id) => document.getElementById(id);
+  const app = $("app");
+  let rarities = [], seriesList = [], cards = [], current = null, busy = false;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function setMsg(t) { $("msg").textContent = t || ""; }
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function slug(s) {
+    return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  }
+  function imgUrl(path) {
+    return db.storage.from("cards").getPublicUrl(path).data.publicUrl + "?t=" + Date.now();
+  }
+
+  // Redimensionne en 600x900 et convertit en WebP
+  async function toWebp(file) {
+    const bmp = await createImageBitmap(file);
+    const W = 600, H = 900;
+    const canvas = document.createElement("canvas");
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    const scale = Math.max(W / bmp.width, H / bmp.height);
+    const w = bmp.width * scale, h = bmp.height * scale;
+    ctx.drawImage(bmp, (W - w) / 2, (H - h) / 2, w, h);
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/webp", 0.8));
+    if (!blob || blob.type !== "image/webp") {
+      throw new Error("Ce navigateur ne sait pas créer de WebP (utilise Chrome, Edge ou Firefox)");
+    }
+    return blob;
+  }
+
+  async function loadRarities() {
+    const { data, error } = await db.from("rarities").select("id, label, sort_order").order("sort_order");
+    if (error) throw error;
+    rarities = data;
+  }
+  async function loadSeries() {
+    const { data, error } = await db.from("series").select("id, name, is_active").order("name");
+    if (error) throw error;
+    seriesList = data;
+    if (!current || !seriesList.find((s) => s.id === current)) current = seriesList.length ? seriesList[0].id : null;
+  }
+  async function loadCards() {
+    if (!current) { cards = []; return; }
+    const { data, error } = await db.from("cards")
+      .select("id, number, name, rarity_id, image_path").eq("series_id", current).order("number");
+    if (error) throw error;
+    cards = data;
+  }
+
+  async function createSeries() {
+    const name = $("newSeriesName").value.trim();
+    const id = slug(name);
+    if (!id) { setMsg("Donne un nom à la série."); return; }
+    // Créée inactive : elle n'entre pas dans les tirages tant que tu ne l'actives pas
+    const { error } = await db.from("series").insert({ id, name, is_active: false });
+    if (error) { setMsg("Erreur : " + error.message); return; }
+    current = id;
+    setMsg("Série créée (inactive). Ajoute ses cartes, puis active-la.");
+    await refreshAll();
+  }
+
+  async function setActive(flag) {
+    const { error } = await db.from("series").update({ is_active: flag }).eq("id", current);
+    if (error) { setMsg("Erreur : " + error.message); return; }
+    seriesList.find((s) => s.id === current).is_active = flag;
+    setMsg(flag ? "Série activée : elle entre dans les tirages." : "Série désactivée : elle n'est plus tirée.");
+  }
+
+  async function createThemePack() {
+    const s = seriesList.find((x) => x.id === current);
+    const id = "theme-" + s.id;
+    const ins = await db.from("pack_types").insert({
+      id, name: "Pack à thème · " + s.name, series_id: s.id, cards_per_pack: 5, price: 60
+    });
+    if (ins.error) { setMsg("Erreur : " + ins.error.message); return; }
+    const weights = { commune: 50, peu_commune: 24, rare: 14, super_rare: 7, ultra_rare: 3, legendaire: 2 };
+    const rows = Object.entries(weights).map(([r, w]) => ({ pack_type_id: id, rarity_id: r, weight: w }));
+    const w = await db.from("pack_type_weights").insert(rows);
+    if (w.error) { setMsg("Erreur : " + w.error.message); return; }
+    setMsg("Pack à thème créé (60 pièces).");
+    await renderThemeArea();
+  }
+
+  async function renderThemeArea() {
+    const area = $("themeArea");
+    area.textContent = "";
+    if (!current) return;
+    const { data } = await db.from("pack_types").select("id").eq("id", "theme-" + current).maybeSingle();
+    if (data) {
+      area.appendChild(el("span", "", "Pack à thème : déjà créé."));
+    } else {
+      const b = el("button", "secondary", "Créer le pack à thème (60 pièces)");
+      b.onclick = createThemePack;
+      area.appendChild(b);
+    }
+  }
+
+  async function bulkAdd() {
+    if (busy) return;
+    const files = Array.from($("bulkInput").files)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    if (!files.length) { setMsg("Choisis d'abord des images."); return; }
+    busy = true; $("bulkBtn").disabled = true;
+    let next = cards.reduce((m, c) => Math.max(m, c.number), 0) + 1;
+    const defaultRarity = rarities[0].id;
+    let done = 0;
+    for (const f of files) {
+      setMsg("Envoi " + (done + 1) + " / " + files.length + " : " + f.name);
+      try {
+        const blob = await toWebp(f);
+        const path = current + "/" + pad(next) + ".webp";
+        const up = await db.storage.from("cards").upload(path, blob, { contentType: "image/webp", upsert: true });
+        if (up.error) throw up.error;
+        const ins = await db.from("cards").insert({
+          series_id: current, number: next, name: "Carte " + pad(next),
+          rarity_id: defaultRarity, image_path: path
+        });
+        if (ins.error) throw ins.error;
+        next++; done++;
+      } catch (e) {
+        setMsg("Erreur sur " + f.name + " : " + e.message);
+        break;
+      }
+    }
+    if (done === files.length) setMsg(done + " carte(s) ajoutée(s). Règle maintenant leur nom et leur rareté dans le tableau.");
+    busy = false;
+    $("bulkInput").value = "";
+    await loadCards();
+    renderCards();
+  }
+
+  async function updateCard(c, patch, status) {
+    status.textContent = "…";
+    const { error } = await db.from("cards").update(patch).eq("id", c.id);
+    if (error) { status.textContent = "Erreur"; setMsg("Erreur : " + error.message); return false; }
+    Object.assign(c, patch);
+    status.textContent = "✓";
+    return true;
+  }
+
+  async function replaceImage(c, file, status, img) {
+    try {
+      status.textContent = "…";
+      const blob = await toWebp(file);
+      const path = current + "/" + pad(c.number) + ".webp";
+      const up = await db.storage.from("cards").upload(path, blob, { contentType: "image/webp", upsert: true });
+      if (up.error) throw up.error;
+      if (c.image_path !== path) {
+        const ok = await updateCard(c, { image_path: path }, status);
+        if (!ok) return;
+      }
+      img.src = imgUrl(path);
+      status.textContent = "✓";
+    } catch (e) {
+      status.textContent = "Erreur";
+      setMsg("Erreur : " + e.message);
+    }
+  }
+
+  async function deleteCard(c) {
+    if (!confirm("Supprimer la carte #" + pad(c.number) + " ? Elle disparaîtra aussi des collections des joueurs.")) return;
+    const { error } = await db.from("cards").delete().eq("id", c.id);
+    if (error) { setMsg("Erreur : " + error.message); return; }
+    if (c.image_path) await db.storage.from("cards").remove([c.image_path]);
+    setMsg("Carte supprimée.");
+    await loadCards();
+    renderCards();
+  }
+
+  function renderCards() {
+    const wrap = $("cardsWrap");
+    wrap.textContent = "";
+    $("count").textContent = cards.length + " carte(s) dans cette série";
+    if (!cards.length) return;
+    const table = el("table");
+    const head = el("tr");
+    ["Image", "N°", "Nom", "Rareté", "", ""].forEach((h) => head.appendChild(el("th", "", h)));
+    table.appendChild(head);
+
+    cards.forEach((c) => {
+      const tr = el("tr");
+      const status = el("span", "", "");
+
+      const tdImg = el("td");
+      const img = el("img", "thumb");
+      if (c.image_path) {
+        img.src = imgUrl(c.image_path);
+        img.onerror = () => { img.removeAttribute("src"); };
+      }
+      tdImg.appendChild(img);
+      tr.appendChild(tdImg);
+
+      tr.appendChild(el("td", "", "#" + pad(c.number)));
+
+      const tdName = el("td");
+      const inp = el("input");
+      inp.type = "text"; inp.value = c.name;
+      inp.onchange = () => {
+        const v = inp.value.trim();
+        if (!v) { inp.value = c.name; return; }
+        updateCard(c, { name: v }, status);
+      };
+      tdName.appendChild(inp);
+      tr.appendChild(tdName);
+
+      const tdRar = el("td");
+      const sel = el("select");
+      rarities.forEach((r) => {
+        const o = el("option", "", r.label);
+        o.value = r.id;
+        if (r.id === c.rarity_id) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = () => updateCard(c, { rarity_id: sel.value }, status);
+      tdRar.appendChild(sel);
+      tr.appendChild(tdRar);
+
+      const tdImgBtn = el("td");
+      const fileInp = el("input");
+      fileInp.type = "file"; fileInp.accept = "image/*"; fileInp.style.display = "none";
+      fileInp.onchange = () => { if (fileInp.files[0]) replaceImage(c, fileInp.files[0], status, img); };
+      const imgBtn = el("button", "secondary small", "Changer l'image");
+      imgBtn.onclick = () => fileInp.click();
+      tdImgBtn.appendChild(fileInp);
+      tdImgBtn.appendChild(imgBtn);
+      tr.appendChild(tdImgBtn);
+
+      const tdDel = el("td");
+      const del = el("button", "danger small", "Supprimer");
+      del.onclick = () => deleteCard(c);
+      tdDel.appendChild(del);
+      tdDel.appendChild(status);
+      tr.appendChild(tdDel);
+
+      table.appendChild(tr);
+    });
+    const sc = el("div", "scroll");
+    sc.appendChild(table);
+    wrap.appendChild(sc);
+  }
+
+  function buildUI() {
+    app.textContent = "";
+
+    app.appendChild(el("h2", "", "Séries"));
+    const p1 = el("div", "panel");
+    const r1 = el("div", "row");
+    const sel = el("select");
+    sel.id = "seriesSelect";
+    seriesList.forEach((s) => {
+      const o = el("option", "", s.name);
+      o.value = s.id;
+      if (s.id === current) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = async () => {
+      current = sel.value;
+      await refreshSeriesDetails();
+    };
+    r1.appendChild(sel);
+
+    const lab = el("label");
+    const box = el("input");
+    box.type = "checkbox"; box.id = "activeBox";
+    box.onchange = () => setActive(box.checked);
+    lab.appendChild(box);
+    lab.appendChild(document.createTextNode(" Série active (tirée dans les packs)"));
+    r1.appendChild(lab);
+    p1.appendChild(r1);
+
+    const themeArea = el("div", "row");
+    themeArea.id = "themeArea";
+    p1.appendChild(themeArea);
+
+    const r2 = el("div", "row");
+    const ni = el("input");
+    ni.type = "text"; ni.id = "newSeriesName"; ni.placeholder = "Nom de la nouvelle série";
+    const nb = el("button", "", "Créer la série");
+    nb.onclick = createSeries;
+    r2.appendChild(ni); r2.appendChild(nb);
+    p1.appendChild(r2);
+    app.appendChild(p1);
+
+    app.appendChild(el("h2", "", "Cartes de la série"));
+    const p2 = el("div", "panel");
+    const cnt = el("div", "", "");
+    cnt.id = "count";
+    p2.appendChild(cnt);
+
+    const r3 = el("div", "row");
+    const bi = el("input");
+    bi.type = "file"; bi.id = "bulkInput"; bi.multiple = true; bi.accept = "image/*";
+    const bb = el("button", "", "Ajouter ces images comme nouvelles cartes");
+    bb.id = "bulkBtn";
+    bb.onclick = bulkAdd;
+    r3.appendChild(bi); r3.appendChild(bb);
+    p2.appendChild(r3);
+    p2.appendChild(el("small", "", "Les images sont ajoutées dans l'ordre de leur nom de fichier, redimensionnées en 600 × 900 et converties en WebP."));
+    app.appendChild(p2);
+
+    const wrap = el("div", "");
+    wrap.id = "cardsWrap";
+    app.appendChild(wrap);
+  }
+
+  async function refreshSeriesDetails() {
+    const s = seriesList.find((x) => x.id === current);
+    $("activeBox").checked = !!(s && s.is_active);
+    $("activeBox").disabled = !s;
+    await renderThemeArea();
+    await loadCards();
+    renderCards();
+  }
+
+  async function refreshAll() {
+    await loadSeries();
+    buildUI();
+    await refreshSeriesDetails();
+  }
+
+  async function init() {
+    try {
+      const { data: { session } } = await db.auth.getSession();
+      if (!session) {
+        app.textContent = "";
+        app.appendChild(el("p", "", "Connecte-toi d'abord sur la page du jeu, puis reviens ici."));
+        return;
+      }
+      const { data: me } = await db.from("profiles").select("is_admin").maybeSingle();
+      if (!me || !me.is_admin) {
+        app.textContent = "Accès réservé à l'administrateur.";
+        return;
+      }
+      await loadRarities();
+      await refreshAll();
+    } catch (e) {
+      app.textContent = "";
+      setMsg("Erreur : " + e.message);
+    }
+  }
+  init();
+</script>
+</body>
+</html>
