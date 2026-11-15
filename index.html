@@ -11,14 +11,17 @@
     button { font-size: 1.1rem; padding: .8rem 1.4rem; border: 0; border-radius: 8px; background: #5865f2; color: #fff; cursor: pointer; }
     button:disabled { background: #3a3a4a; color: #888; cursor: not-allowed; }
     button.secondary { background: #3a3a4a; font-size: .9rem; padding: .5rem 1rem; }
+    button.small { font-size: .8rem; padding: .35rem .6rem; margin-top: .4rem; }
     .bar { display: flex; gap: .8rem; justify-content: center; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
     .stat { background: var(--panel); padding: .5rem 1rem; border-radius: 8px; }
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .6rem; max-width: 900px; margin: 1rem auto; }
-    .card { border: 3px solid var(--c, #666); background: var(--panel); border-radius: 10px; padding: .6rem .3rem; min-height: 110px; display: flex; flex-direction: column; justify-content: center; gap: .2rem; font-size: .85rem; }
+    .shop { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; max-width: 600px; margin: 1rem auto; }
+    .card { border: 3px solid var(--c, #666); background: var(--panel); border-radius: 10px; padding: .6rem .3rem; min-height: 110px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .2rem; font-size: .85rem; }
     .card small { opacity: .75; }
     .card.missing { opacity: .35; border-style: dashed; }
     .card.new::after { content: "NOUVEAU"; color: #ffd24a; font-size: .7rem; font-weight: bold; margin-top: .3rem; }
     #msg { opacity: .8; min-height: 1.5rem; margin-top: 1rem; }
+    h3 { margin-bottom: .3rem; }
   </style>
 </head>
 <body>
@@ -38,9 +41,10 @@
     };
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
-    let rarityLabels = {};
+    let rarityLabels = {}, rarityValues = {};
     let stock = 0, maxStock = 5, coins = 0, secondsLeft = null;
-    let tickId = null, refreshing = false, currentUser;
+    let dupCount = 0, dupGain = 0;
+    let tickId = null, refreshing = false, busy = false, currentUser;
 
     function el(tag, cls, text) {
       const e = document.createElement(tag);
@@ -52,13 +56,18 @@
     function pad(n) { return String(n).padStart(2, "0"); }
     function fmt(s) { return Math.floor(s / 60) + ":" + pad(s % 60); }
 
-    function cardEl(c, extra, qty) {
+    function cardEl(c, extra, qty, withDiscard) {
       const d = el("div", "card " + (extra || ""));
       d.style.setProperty("--c", COLORS[c.rarity_id] || "#666");
       d.appendChild(el("strong", "", "#" + pad(c.number)));
       d.appendChild(el("span", "", c.name));
       d.appendChild(el("small", "", rarityLabels[c.rarity_id] || c.rarity_id));
       if (qty > 1) d.appendChild(el("small", "", "×" + qty));
+      if (withDiscard && qty > 1) {
+        const b = el("button", "secondary small", "Défausser ×" + (qty - 1));
+        b.onclick = () => discard(c.id);
+        d.appendChild(b);
+      }
       return d;
     }
 
@@ -66,7 +75,17 @@
       $("statStock").textContent = "Packs : " + stock + " / " + maxStock;
       $("statCoins").textContent = "Pièces : " + coins;
       $("statTimer").textContent = secondsLeft == null ? "Stock plein" : "Prochain pack dans " + fmt(secondsLeft);
-      $("openBtn").disabled = stock < 1;
+      $("openBtn").disabled = busy || stock < 1;
+      document.querySelectorAll("[data-price]").forEach((b) => {
+        b.disabled = busy || coins < Number(b.dataset.price);
+      });
+      const da = $("discardAll");
+      if (da) {
+        da.disabled = busy || dupCount === 0;
+        da.textContent = dupCount === 0
+          ? "Aucun doublon à défausser"
+          : "Défausser tous les doublons (+" + dupGain + " pièces)";
+      }
     }
 
     async function loadStatus() {
@@ -87,22 +106,53 @@
       }, 1000);
     }
 
-    async function openPack() {
-      $("openBtn").disabled = true;
-      setMsg("");
-      const { data, error } = await db.rpc("open_pack", { p_pack_type: "gratuit-test" });
-      if (error) { setMsg(error.message); await loadStatus(); return; }
+    async function openPack(packId) {
+      if (busy) return;
+      busy = true; paint(); setMsg("");
+      const { data, error } = await db.rpc("open_pack", { p_pack_type: packId });
+      if (error) { setMsg(error.message); busy = false; await loadStatus(); return; }
       const area = $("packArea");
       area.textContent = "";
-      data.cards.forEach((c) => area.appendChild(cardEl(c, c.is_new ? "new" : "", 0)));
-      stock = data.stock; secondsLeft = data.seconds_to_next;
+      data.cards.forEach((c) => area.appendChild(cardEl(c, c.is_new ? "new" : "", 0, false)));
+      stock = data.stock; secondsLeft = data.seconds_to_next; coins = data.coins;
+      busy = false;
       paint();
       await loadCollection();
     }
 
+    async function discard(cardId) {
+      if (busy) return;
+      busy = true; paint(); setMsg("");
+      const { data, error } = await db.rpc("discard_duplicates", cardId ? { p_card_id: cardId } : {});
+      busy = false;
+      if (error) { setMsg(error.message); paint(); return; }
+      coins = data.coins;
+      paint();
+      setMsg("+" + data.gained + " pièces (" + data.discarded + " doublon(s) défaussé(s))");
+      await loadCollection();
+    }
+
     async function loadRarities() {
-      const { data } = await db.from("rarities").select("id, label");
-      (data || []).forEach((r) => { rarityLabels[r.id] = r.label; });
+      const { data } = await db.from("rarities").select("id, label, discard_value");
+      (data || []).forEach((r) => { rarityLabels[r.id] = r.label; rarityValues[r.id] = r.discard_value; });
+    }
+
+    async function loadShop() {
+      const { data, error } = await db.from("pack_types").select("id, name, price, cards_per_pack").order("price");
+      if (error) { setMsg(error.message); return; }
+      const shop = $("shop");
+      shop.textContent = "";
+      data.filter((p) => p.price !== null).forEach((p) => {
+        const d = el("div", "card");
+        d.appendChild(el("strong", "", p.name));
+        d.appendChild(el("small", "", p.cards_per_pack + " cartes"));
+        const b = el("button", "small", "Acheter (" + p.price + " pièces)");
+        b.dataset.price = p.price;
+        b.onclick = () => openPack(p.id);
+        d.appendChild(b);
+        shop.appendChild(d);
+      });
+      paint();
     }
 
     async function loadCollection() {
@@ -119,11 +169,14 @@
       const grid = $("collection");
       grid.textContent = "";
       let owned = 0;
+      dupCount = 0; dupGain = 0;
       cardsRes.data.forEach((c) => {
         const q = qty[c.id] || 0;
         if (q) {
           owned++;
-          grid.appendChild(cardEl(c, "", q));
+          dupCount += q - 1;
+          dupGain += (q - 1) * (rarityValues[c.rarity_id] || 0);
+          grid.appendChild(cardEl(c, "", q, true));
         } else {
           const d = el("div", "card missing");
           d.appendChild(el("strong", "", "#" + pad(c.number)));
@@ -132,6 +185,7 @@
         }
       });
       $("collTitle").textContent = "Ma collection : " + owned + " / " + cardsRes.data.length;
+      paint();
     }
 
     function logoutButton() {
@@ -152,10 +206,15 @@
       });
       app.appendChild(bar);
 
-      const open = el("button", "", "Ouvrir un pack");
+      const open = el("button", "", "Ouvrir un pack gratuit");
       open.id = "openBtn";
-      open.onclick = openPack;
+      open.onclick = () => openPack("gratuit");
       app.appendChild(open);
+
+      app.appendChild(el("h3", "", "Boutique"));
+      const shop = el("div", "shop");
+      shop.id = "shop";
+      app.appendChild(shop);
 
       const pack = el("div", "cards");
       pack.id = "packArea";
@@ -164,6 +223,10 @@
       const title = el("h3", "", "Ma collection");
       title.id = "collTitle";
       app.appendChild(title);
+      const da = el("button", "secondary", "");
+      da.id = "discardAll";
+      da.onclick = () => discard(null);
+      app.appendChild(da);
       const grid = el("div", "cards");
       grid.id = "collection";
       app.appendChild(grid);
@@ -200,6 +263,7 @@
       startTick();
       await loadRarities();
       await loadStatus();
+      await loadShop();
       await loadCollection();
     }
 
