@@ -77,10 +77,8 @@
     .card.missing .q { font-size: 14cqw; font-weight: 700; }
     .card.missing .n { font-size: 8cqw; opacity: .8; }
 
-    /* ---------- OUVERTURE DE PACK ---------- */
-    .packwrap { margin: 1.2rem auto; max-width: 760px; }
-    .pack { display: grid; grid-template-columns: repeat(5, 1fr); gap: .6rem; }
-    .flip { perspective: 900px; cursor: pointer; animation: dealin .4s both; animation-delay: calc(var(--i, 0) * 70ms); }
+    /* ---------- CARTE QUI SE RETOURNE ---------- */
+    .flip { perspective: 900px; cursor: pointer; }
     .flip-inner { position: relative; aspect-ratio: 2 / 3; transform-style: preserve-3d; transition: transform .7s cubic-bezier(.2, .8, .2, 1); }
     .flip.revealed .flip-inner { transform: rotateY(180deg); }
     .cardback, .flip .front { position: absolute; inset: 0; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
@@ -88,30 +86,42 @@
     .flip .front .face { height: 100%; aspect-ratio: auto; }
     .cardback {
       border-radius: 12px; border: 4px solid #5865f2; display: flex; align-items: center; justify-content: center;
-      font-size: 2.6rem; color: rgba(255, 255, 255, .5);
+      font-size: 3rem; color: rgba(255, 255, 255, .5);
       background: repeating-linear-gradient(45deg, #2a2a6a 0 10px, #232359 10px 20px);
     }
     .flip.wow { animation: pop .8s; }
     .flip.wow .front { animation: glow 1.4s ease-out; }
     .flip.wow-ultra_rare, .flip.wow-legendaire { animation: pop 1s; }
-    @keyframes dealin { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+    .flip.in { animation: slidein .35s ease-out both; }
+    .flip.out { animation: slideout .35s ease-in both !important; }
     @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.14); } 100% { transform: scale(1); } }
     @keyframes glow { 0% { box-shadow: 0 0 40px 10px var(--bc, #fff); } 100% { box-shadow: 0 0 0 0 transparent; } }
+    @keyframes slidein { from { opacity: 0; transform: translateX(80px) rotate(6deg); } to { opacity: 1; transform: none; } }
+    @keyframes slideout { to { opacity: 0; transform: translateX(-120%) rotate(-10deg); } }
 
-    /* ---------- COLLECTION ---------- */
+    /* ---------- OVERLAYS ---------- */
+    .overlay { position: fixed; inset: 0; z-index: 100; background: rgba(5, 5, 12, .9); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; padding: 1rem; animation: fade .2s; }
+    .overlay.packov { z-index: 90; }
+    .zoombox { width: min(86vw, 380px, calc((100vh - 6rem) * 2 / 3)); }
+    .zoombox .card { padding: 6px; border-radius: 16px; }
+    .overlay small { opacity: .6; }
+    .packtop { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 1rem; }
+    .counter { font-weight: 600; opacity: .9; }
+    .stage { width: min(78vw, 340px, calc((100vh - 13rem) * 2 / 3)); cursor: pointer; }
+    .stage .flip { width: 100%; }
+    .hint { opacity: .75; min-height: 1.4rem; font-size: .95rem; }
+    .summarybox { width: min(94vw, 760px); max-height: calc(100vh - 9rem); overflow-y: auto; padding: .4rem; }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+    /* ---------- PACK / COLLECTION ---------- */
+    .packwrap { margin: 1.2rem auto; max-width: 760px; }
+    .pack { display: grid; grid-template-columns: repeat(5, 1fr); gap: .6rem; }
     .serieshead { margin: 1.6rem 0 .2rem; }
     .serieshead h4 { margin: 0 0 .4rem; font-size: 1.05rem; }
     .progress { height: 8px; max-width: 320px; margin: 0 auto; background: #26263f; border-radius: 99px; overflow: hidden; }
     .progress span { display: block; height: 100%; background: linear-gradient(90deg, #5865f2, #ff8bd1); }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .7rem; margin: .8rem auto; }
     .slot { display: flex; flex-direction: column; align-items: stretch; }
-
-    /* ---------- ZOOM ---------- */
-    .overlay { position: fixed; inset: 0; z-index: 100; background: rgba(5, 5, 12, .88); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .8rem; animation: fade .2s; }
-    .zoombox { width: min(86vw, 380px, calc((100vh - 6rem) * 2 / 3)); }
-    .zoombox .card { padding: 6px; border-radius: 16px; }
-    .overlay small { opacity: .6; }
-    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
     #msg { opacity: .85; min-height: 1.5rem; margin-top: 1rem; }
 
@@ -139,16 +149,14 @@
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const WOW = ["rare", "super_rare", "ultra_rare", "legendaire"];
-    const SUSPENSE = ["super_rare", "ultra_rare", "legendaire"];
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     let rarityLabels = {}, rarityValues = {};
     let cardsById = {}, seriesById = {}, seriesList = [];
     let stock = 0, maxStock = 5, coins = 0, secondsLeft = null;
     let dupCount = 0, dupGain = 0;
-    let tickId = null, refreshing = false, busy = false, currentUser, revealToken = 0;
+    let tickId = null, refreshing = false, busy = false, currentUser;
 
     function el(tag, cls, text) {
       const e = document.createElement(tag);
@@ -217,70 +225,132 @@
     function closeZoom() {
       const o = $("overlay");
       if (o) o.remove();
-      document.body.style.overflow = "";
+      document.body.style.overflow = $("packOverlay") ? "hidden" : "";
     }
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeZoom(); });
 
-    /* ---------- OUVERTURE DE PACK ---------- */
+    /* ---------- OUVERTURE DE PACK, CARTE PAR CARTE ---------- */
     function reveal(w) {
       w.classList.add("revealed");
       const r = w.dataset.rarity;
       if (WOW.includes(r)) w.classList.add("wow", "wow-" + r);
     }
 
-    function flipEl(c, isNew, index) {
+    function flipEl(c, isNew) {
       const w = el("div", "flip");
-      w.style.setProperty("--i", index);
       w.dataset.rarity = c.rarity_id;
       const inner = el("div", "flip-inner");
-      const back = el("div", "cardback", "?");
+      inner.appendChild(el("div", "cardback", "?"));
       const front = cardEl(c, { isNew: isNew });
       front.classList.add("front");
-      inner.appendChild(back);
       inner.appendChild(front);
       w.appendChild(inner);
-      w.onclick = () => {
-        if (!w.classList.contains("revealed")) reveal(w);
-        else openZoom(c, 0);
-      };
       return w;
     }
 
-    async function revealSequence(wraps, token) {
-      await sleep(450);
-      for (const w of wraps) {
-        if (token !== revealToken) return false;
-        const high = SUSPENSE.includes(w.dataset.rarity);
-        if (!w.classList.contains("revealed")) {
-          if (high) await sleep(700);
-          if (token !== revealToken) return false;
-          reveal(w);
-        }
-        await sleep(high ? 1300 : 650);
-      }
-      return token === revealToken;
+    function packGrid(list) {
+      const g = el("div", "pack");
+      list.forEach((c) => g.appendChild(cardEl(c, { isNew: c.is_new, zoomable: true })));
+      return g;
     }
 
-    function showPack(list) {
-      const token = ++revealToken;
+    function fillLastPack(list) {
       const area = $("packArea");
       area.textContent = "";
-      const wraps = list.map((c, i) => {
-        const w = flipEl(c, c.is_new, i);
-        area.appendChild(w);
-        return w;
-      });
-      const skip = $("packSkip");
-      skip.hidden = false;
-      skip.onclick = () => {
-        revealToken++;
-        wraps.forEach((w) => { if (!w.classList.contains("revealed")) reveal(w); });
-        skip.hidden = true;
+      area.appendChild(packGrid(list));
+      $("packTitle").hidden = false;
+    }
+
+    function closePackOverlay() {
+      const o = $("packOverlay");
+      if (o) o.remove();
+      document.body.style.overflow = "";
+    }
+
+    function startPackOverlay(list) {
+      closePackOverlay();
+      let i = 0, phase = "back", lockUntil = 0, moving = false;
+
+      const ov = el("div", "overlay packov");
+      ov.id = "packOverlay";
+
+      const top = el("div", "packtop");
+      const counter = el("span", "counter");
+      const skipBtn = el("button", "secondary small", "Passer");
+      top.appendChild(counter);
+      top.appendChild(skipBtn);
+      ov.appendChild(top);
+
+      const stage = el("div", "stage");
+      ov.appendChild(stage);
+      const hint = el("div", "hint");
+      ov.appendChild(hint);
+
+      const summary = el("div", "summarybox");
+      summary.hidden = true;
+      ov.appendChild(summary);
+      const done = el("button", "", "Terminer");
+      done.hidden = true;
+      ov.appendChild(done);
+
+      function updateHint() {
+        counter.textContent = "Carte " + (i + 1) + " / " + list.length;
+        if (phase === "back") hint.textContent = "Touche la carte pour la retourner";
+        else hint.textContent = i < list.length - 1
+          ? "Touche la carte pour passer à la suivante"
+          : "Touche la carte pour voir ton pack";
+      }
+
+      function showCard(animate) {
+        stage.textContent = "";
+        const c = list[i];
+        const w = flipEl(c, c.is_new);
+        if (animate) w.classList.add("in");
+        stage.appendChild(w);
+        phase = "back";
+        updateHint();
+      }
+
+      function showSummary() {
+        stage.hidden = true;
+        hint.hidden = true;
+        skipBtn.hidden = true;
+        counter.textContent = "Ton pack";
+        summary.textContent = "";
+        summary.appendChild(packGrid(list));
+        summary.hidden = false;
+        done.hidden = false;
+      }
+
+      function advance() {
+        if (moving || Date.now() < lockUntil) return;
+        const w = stage.firstChild;
+        if (!w) return;
+        if (phase === "back") {
+          reveal(w);
+          phase = "front";
+          lockUntil = Date.now() + 500;
+          updateHint();
+        } else if (i < list.length - 1) {
+          moving = true;
+          w.classList.add("out");
+          setTimeout(() => { i++; showCard(true); moving = false; }, 350);
+        } else {
+          showSummary();
+        }
+      }
+
+      stage.onclick = advance;
+      skipBtn.onclick = showSummary;
+      done.onclick = () => {
+        closePackOverlay();
+        fillLastPack(list);
         loadCollection();
       };
-      revealSequence(wraps, token).then((done) => {
-        if (done) { skip.hidden = true; loadCollection(); }
-      });
+
+      document.body.appendChild(ov);
+      document.body.style.overflow = "hidden";
+      showCard(false);
     }
 
     /* ---------- DONNÉES ---------- */
@@ -360,10 +430,12 @@
       const { data, error } = await db.rpc("open_pack", { p_pack_type: packId });
       if (error) { setMsg(error.message); busy = false; await loadStatus(); return; }
       if (data.cards.some((c) => !cardsById[c.id])) await loadCatalog();
+      // Précharge les images pour éviter un affichage tardif au retournement
+      data.cards.forEach((c) => { if (c.image_path) { const im = new Image(); im.src = imageUrl(c.image_path); } });
       stock = data.stock; secondsLeft = data.seconds_to_next; coins = data.coins;
-      showPack(data.cards);
       busy = false;
       paint();
+      startPackOverlay(data.cards);
     }
 
     async function discard(cardId) {
@@ -463,13 +535,13 @@
       app.appendChild(open);
 
       const pw = el("div", "packwrap");
-      const pack = el("div", "pack");
+      const pt = el("h3", "", "Dernier pack ouvert");
+      pt.id = "packTitle";
+      pt.hidden = true;
+      pw.appendChild(pt);
+      const pack = el("div", "");
       pack.id = "packArea";
       pw.appendChild(pack);
-      const skip = el("button", "secondary small", "Tout révéler");
-      skip.id = "packSkip";
-      skip.hidden = true;
-      pw.appendChild(skip);
       app.appendChild(pw);
 
       app.appendChild(el("h3", "", "Boutique"));
