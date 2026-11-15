@@ -4,9 +4,70 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jeu de cartes</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin: 0; padding: 4rem 1rem; background: #14141c; color: #f2f2f7; }
+    button { font-size: 1.1rem; padding: .8rem 1.4rem; border: 0; border-radius: 8px; background: #5865f2; color: #fff; cursor: pointer; }
+    button.secondary { background: #3a3a4a; font-size: .9rem; padding: .5rem 1rem; }
+    #msg { margin-top: 1.5rem; opacity: .8; }
+  </style>
 </head>
-<body style="font-family: sans-serif; text-align: center; margin-top: 4rem;">
-  <h1>Hello !</h1>
-  <p>Le projet est en ligne.</p>
+<body>
+  <h1>Jeu de cartes</h1>
+  <div id="app">Chargement…</div>
+  <p id="msg"></p>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script>
+    const SUPABASE_URL = "https://hzabzcjvbricrferrxje.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_Stf0JCgiDfKW4fSTDwNOxg_lu3HERpK";
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const app = document.getElementById("app");
+    const msg = document.getElementById("msg");
+
+    async function render(session) {
+      app.textContent = "";
+      msg.textContent = "";
+
+      if (!session) {
+        const btn = document.createElement("button");
+        btn.textContent = "Se connecter avec Discord";
+        btn.onclick = () => db.auth.signInWithOAuth({
+          provider: "discord",
+          options: { redirectTo: window.location.origin }
+        });
+        app.appendChild(btn);
+        return;
+      }
+
+      const { data: profile, error } = await db
+        .from("profiles")
+        .select("display_name, coins")
+        .maybeSingle();
+
+      const hello = document.createElement("h2");
+      hello.textContent = profile
+        ? "Bienvenue, " + profile.display_name + " !"
+        : "Connecté, mais profil introuvable.";
+      app.appendChild(hello);
+
+      if (profile) {
+        const coins = document.createElement("p");
+        coins.textContent = "Pièces : " + profile.coins;
+        app.appendChild(coins);
+      } else if (error) {
+        msg.textContent = "Erreur : " + error.message;
+      }
+
+      const out = document.createElement("button");
+      out.className = "secondary";
+      out.textContent = "Se déconnecter";
+      out.onclick = () => db.auth.signOut();
+      app.appendChild(out);
+    }
+
+    db.auth.getSession().then(({ data }) => render(data.session));
+    db.auth.onAuthStateChange((_event, session) => render(session));
+  </script>
 </body>
 </html>
