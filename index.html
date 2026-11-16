@@ -152,7 +152,7 @@
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
 
-    let rarityLabels = {}, rarityValues = {};
+    let rarityLabels = {}, rarityValues = {}, rarityRank = {};
     let cardsById = {}, seriesById = {}, seriesList = [];
     let stock = 0, maxStock = 5, coins = 0, secondsLeft = null;
     let dupCount = 0, dupGain = 0;
@@ -390,8 +390,8 @@
     }
 
     async function loadRarities() {
-      const { data } = await db.from("rarities").select("id, label, discard_value");
-      (data || []).forEach((r) => { rarityLabels[r.id] = r.label; rarityValues[r.id] = r.discard_value; });
+      const { data } = await db.from("rarities").select("id, label, discard_value, sort_order");
+      (data || []).forEach((r) => { rarityLabels[r.id] = r.label; rarityValues[r.id] = r.discard_value; rarityRank[r.id] = r.sort_order; });
     }
 
     async function loadCatalog() {
@@ -435,7 +435,8 @@
       stock = data.stock; secondsLeft = data.seconds_to_next; coins = data.coins;
       busy = false;
       paint();
-      startPackOverlay(data.cards);
+      const sorted = data.cards.slice().sort((a, b) => (rarityRank[a.rarity_id] || 0) - (rarityRank[b.rarity_id] || 0));
+      startPackOverlay(sorted);
     }
 
     async function discard(cardId) {
